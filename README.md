@@ -1,7 +1,12 @@
-# SpotiFLAC API Wrapper
-FastAPI-based REST API for downloading Spotify content in FLAC via Qobuz/Tidal.
+# SpotiFLAC API
 
-Built on the official `SpotiFLAC` Python module. Runs as a Docker container on Goliath.
+FastAPI-based REST API wrapper for [SpotiFLAC](https://github.com/spotbye/SpotiFLAC) — download Spotify content in true FLAC via Qobuz, Amazon Music, and Tidal. No account required.
+
+A thin API layer around [SpotiFLAC (Python Module)](https://github.com/ShuShuzinhuu/SpotiFLAC-Module-Version) that adds:
+- **REST endpoints** for remote download triggering
+- **Job queue** with status tracking
+- **Auto-fallback** across multiple services (qobuz → amazon → tidal)
+- **Docker packaging** for headless server deployment
 
 ## Endpoints
 
@@ -47,3 +52,14 @@ curl http://localhost:9118/api/status/{job_id}
 - **Credentials**: Qobuz email/password injected via `.env` file
 - **Permissions**: Runs as UID/GID 1000 (jaspreet user) for proper file ownership
 - **Concurrency**: Supports up to 3 simultaneous downloads
+
+## Built With
+
+- [SpotiFLAC](https://github.com/spotbye/SpotiFLAC) — Core FLAC downloader (by [afkarxyz](https://github.com/afkarxyz) / spotbye)
+- [SpotiFLAC Python Module](https://github.com/ShuShuzinhuu/SpotiFLAC-Module-Version) — Python library wrapper
+- [FastAPI](https://fastapi.tiangolo.com/) — REST framework
+- [Uvicorn](https://www.uvicorn.org/) — ASGI server
+
+## License
+
+This project is MIT licensed. SpotiFLAC itself is also MIT licensed.

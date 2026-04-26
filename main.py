@@ -11,6 +11,7 @@ import re
 import subprocess
 import time
 import uuid
+import threading
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -54,15 +55,15 @@ class JobStatusResponse(BaseModel):
 def run_spotiflac(url: str, output_dir: str, services: list[str]) -> dict:
     """Run spotiflac CLI directly. Returns result dict."""
     Path(output_dir).mkdir(parents=True, exist_ok=True)
-    
+
     cmd = ["spotiflac", url, output_dir]
     for s in services:
         cmd.extend(["--service", s])
     cmd.extend(["--quality", "6"])
-    
+
     logger.info("Running: %s", " ".join(cmd[:4]) + " ...")
     start = time.time()
-    
+
     result = subprocess.run(
         cmd,
         capture_output=True,
@@ -70,17 +71,17 @@ def run_spotiflac(url: str, output_dir: str, services: list[str]) -> dict:
         timeout=900,
         cwd=output_dir,
     )
-    
+
     output = result.stdout + result.stderr
     elapsed = time.time() - start
-    
+
     # Find FLAC files
     files = []
     for root, dirs, fnames in os.walk(output_dir):
         for f in fnames:
             if f.endswith(".flac"):
                 files.append(os.path.join(root, f))
-    
+
     # Parse summary
     tracks_ok = 0
     tracks_fail = 0
@@ -88,10 +89,10 @@ def run_spotiflac(url: str, output_dir: str, services: list[str]) -> dict:
         tracks_ok = int(m.group(1))
     for m in re.finditer(r"Fallite\s*:\s*(\d+)", output):
         tracks_fail = int(m.group(1))
-    
+
     success = result.returncode == 0 and tracks_ok > 0
     error = output[-500:] if not success else None
-    
+
     return {
         "success": success,
         "files": files,
@@ -101,6 +102,26 @@ def run_spotiflac(url: str, output_dir: str, services: list[str]) -> dict:
         "elapsed": round(elapsed, 1),
         "services_used": services,
     }
+
+def run_job(jid: str, url: str, outdir: str, svc_list: list[str]):
+    """Background job runner."""
+    logger.info("Job %s: starting - %s (services: %s)", jid, url, svc_list)
+    jobs[jid]["status"] = "running"
+    jobs[jid]["started_at"] = time.time()
+
+    r = run_spotiflac(url, outdir, svc_list)
+
+    if r["success"]:
+        jobs[jid]["status"] = "completed"
+        jobs[jid]["files"] = r["files"]
+        jobs[jid]["progress"] = f"{r['tracks_ok']}/{r['tracks_ok']+r['tracks_fail']} tracks, {r['elapsed']}s"
+        logger.info("Job %s: %d tracks in %.1fs", jid, r["tracks_ok"], r["elapsed"])
+    else:
+        jobs[jid]["status"] = "failed"
+        jobs[jid]["error"] = r["error"]
+        logger.error("Job %s: failed - %s", jid, r["error"][:200] if r["error"] else "unknown")
+
+    jobs[jid]["completed_at"] = time.time()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -128,7 +149,7 @@ def download(req: DownloadRequest):
     job_id = str(uuid.uuid4())[:8]
     dest = os.path.join(MUSIC_DIR, req.output_subdir) if req.output_subdir else MUSIC_DIR
     svcs = req.services or DEFAULT_SERVICES
-    
+
     jobs[job_id] = {
         "status": "queued",
         "url": req.url,
@@ -140,28 +161,11 @@ def download(req: DownloadRequest):
         "started_at": None,
         "completed_at": None,
     }
-    
-    def run_job(jid, url, outdir, svc_list):
-        logger.info("Job %s: starting - %s (services: %s)", jid, url, svc_list)
-        jobs[jid]["status"] = "running"
-        jobs[jid]["started_at"] = time.time()
-        
-        r = run_spotiflac(url, outdir, svc_list)
-        
-        if r["success"]:
-            jobs[jid]["status"] = "completed"
-            jobs[jid]["files"] = r["files"]
-            jobs[jid]["progress"] = f"{r['tracks_ok']}/{r['tracks_ok']+r['tracks_fail']} tracks, {r['elapsed']}s"
-            logger.info("Job %s: %d tracks in %.1fs", jid, r["tracks_ok"], r["elapsed"])
-        else:
-            jobs[jid]["status"] = "failed"
-            jobs[jid]["error"] = r["error"]
-            logger.error("Job %s: failed - %s", jid, r["error"][:200] if r["error"] else "unknown")
-        
-        jobs[jid]["completed_at"] = time.time()
-    
-    asyncio.create_task(asyncio.to_thread(run_job, job_id, req.url, dest, svcs))
-    
+
+    # Use threading for background work instead of asyncio.create_task
+    t = threading.Thread(target=run_job, args=(job_id, req.url, dest, svcs), daemon=True)
+    t.start()
+
     return DownloadResponse(
         job_id=job_id,
         status="queued",

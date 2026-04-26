@@ -1,0 +1,17 @@
+services:
+  spotiflac-api:
+    build: .
+    container_name: spotiflac-api
+    restart: unless-stopped
+    ports:
+      - "9118:9118"
+    volumes:
+      - /home/jaspreet/storage/music:/music
+    env_file: .env
+    environment:
+      - MUSIC_DIR=/music
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
